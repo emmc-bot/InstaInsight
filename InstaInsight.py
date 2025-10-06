@@ -4,28 +4,79 @@ import json
 import time
 import random
 from datetime import datetime
-from collections import Counter
-import matplotlib.pyplot as plt
-import pandas as pd
 
 class InstaInsight:
     def __init__(self):
         self.bot = instaloader.Instaloader()
         self.current_profile = None
         self.data_folder = "instagram_data"
+        self.request_count = 0
+        self.last_request_time = time.time()
         
-        # Create data folder if it doesn't exist
+        # Rate limiting settings
+        self.MIN_DELAY = 5
+        self.MAX_DELAY = 10
+        
         if not os.path.exists(self.data_folder):
             os.makedirs(self.data_folder)
+    
+    def safe_request(self):
+        """Add delay between all requests to avoid rate limiting"""
+        current_time = time.time()
+        time_since_last = current_time - self.last_request_time
+        
+        if time_since_last < self.MIN_DELAY:
+            wait_time = self.MIN_DELAY - time_since_last
+            print(f"⏳ Rate limiting: waiting {wait_time:.1f} seconds...")
+            time.sleep(wait_time)
+        
+        self.last_request_time = time.time()
+        self.request_count += 1
+        
+        if self.request_count % 10 == 0:
+            long_wait = random.uniform(15, 30)
+            print(f"⏳ Longer delay after {self.request_count} requests: {long_wait:.1f} seconds...")
+            time.sleep(long_wait)
+    
+    def can_access_followers(self, profile):
+        """Check if we can access followers for a profile"""
+        print(f"🔍 Checking follower access for @{profile.username}...")
+        
+        # Check if profile is private
+        if profile.is_private:
+            print("❌ Cannot access followers - Profile is private")
+            return False
+        
+        # Check if we're logged in (required for some access)
+        try:
+            # Try to get just 1 follower to test access
+            test_follower = None
+            for follower in profile.get_followers():
+                test_follower = follower
+                break
+            
+            if test_follower:
+                print("✅ Can access followers!")
+                return True
+            else:
+                print("❌ No followers accessible")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Cannot access followers: {e}")
+            return False
     
     def login(self, username=None):
         """Login to Instagram"""
         try:
             if username:
+                print(f"🔐 Attempting to log in as @{username}...")
                 self.bot.interactive_login(username)
+                print("✅ Login successful!")
+                return True
             else:
-                print("⚠️  No username provided. Some features may be limited.")
-            return True
+                print("⚠️  No username provided. Using public access (limited features).")
+                return False
         except Exception as e:
             print(f"❌ Login failed: {e}")
             return False
@@ -33,8 +84,14 @@ class InstaInsight:
     def load_profile(self, username):
         """Load an Instagram profile"""
         try:
+            self.safe_request()
             self.current_profile = instaloader.Profile.from_username(self.bot.context, username)
             print(f"✅ Loaded profile: @{username}")
+            
+            # Check if we can access followers
+            self.can_access_followers(self.current_profile)
+            
+            time.sleep(random.uniform(3, 6))
             return True
         except Exception as e:
             print(f"❌ Failed to load profile: {e}")
@@ -46,263 +103,250 @@ class InstaInsight:
             print("❌ No profile loaded!")
             return
         
-        print("\n" + "="*60)
-        print(f"📊 PROFILE ANALYSIS: @{self.current_profile.username}")
-        print("="*60)
+        print("\n" + "="*50)
+        print(f"📊 PROFILE INFO: @{self.current_profile.username}")
+        print("="*50)
         
-        info = {
-            "User ID": self.current_profile.userid,
-            "Posts": f"{self.current_profile.mediacount:,}",
-            "Followers": f"{self.current_profile.followers:,}",
-            "Following": f"{self.current_profile.followees:,}",
-            "Follow Ratio": f"{self.current_profile.followers/self.current_profile.followees:.2f}" if self.current_profile.followees > 0 else "N/A",
-            "Bio": self.current_profile.biography[:100] + "..." if len(self.current_profile.biography) > 100 else self.current_profile.biography,
-            "External URL": self.current_profile.external_url or "None",
-            "Private Account": "Yes" if self.current_profile.is_private else "No",
-            "Verified": "Yes" if self.current_profile.is_verified else "No"
-        }
+        print(f"Username: {self.current_profile.username}")
+        print(f"User ID: {self.current_profile.userid}")
+        print(f"Number of Posts: {self.current_profile.mediacount}")
+        print(f"Followers: {self.current_profile.followers}")
+        print(f"Following: {self.current_profile.followees}")
+        print(f"Bio: {self.current_profile.biography}")
+        print(f"External URL: {self.current_profile.external_url}")
+        print(f"Private Account: {'Yes' if self.current_profile.is_private else 'No'}")
+        print(f"Verified: {'Yes' if self.current_profile.is_verified else 'No'}")
         
-        for key, value in info.items():
-            print(f"  {key}: {value}")
+        # Show follower access status
+        can_access = self.can_access_followers(self.current_profile)
+        print(f"Follower Access: {'✅ Available' if can_access else '❌ Restricted'}")
     
-    def follower_analysis(self, max_followers=100):
-        """Analyze followers and following"""
+    def get_followers_list(self, limit=20):
+        """Get list of followers with access checks"""
+        if not self.current_profile:
+            print("❌ No profile loaded!")
+            return []
+        
+        # Check if we can access followers first
+        if not self.can_access_followers(self.current_profile):
+            print("❌ Cannot get followers - access restricted")
+            return []
+        
+        print(f"\n📥 Getting followers (first {limit})...")
+        followers = []
+        
+        try:
+            for i, follower in enumerate(self.current_profile.get_followers()):
+                if i >= limit:
+                    break
+                followers.append(follower.username)
+                if (i + 1) % 5 == 0:
+                    print(f"  - Collected {i + 1} followers...")
+                time.sleep(2)  # Increased delay for follower access
+            
+            print(f"✅ Successfully collected {len(followers)} followers")
+            return followers
+            
+        except Exception as e:
+            print(f"❌ Error getting followers: {e}")
+            return []
+    
+    def get_following_list(self, limit=20):
+        """Get list of people you follow with access checks"""
+        if not self.current_profile:
+            print("❌ No profile loaded!")
+            return []
+        
+        # Check if we can access following first
+        if not self.can_access_followers(self.current_profile):
+            print("❌ Cannot get following - access restricted")
+            return []
+        
+        print(f"\n📥 Getting following (first {limit})...")
+        followees = []
+        
+        try:
+            for i, followee in enumerate(self.current_profile.get_followees()):
+                if i >= limit:
+                    break
+                followees.append(followee.username)
+                if (i + 1) % 5 == 0:
+                    print(f"  - Collected {i + 1} following...")
+                time.sleep(2)  # Increased delay for following access
+            
+            print(f"✅ Successfully collected {len(followees)} following")
+            return followees
+            
+        except Exception as e:
+            print(f"❌ Error getting following: {e}")
+            return []
+    
+    def follower_analysis(self):
+        """Analyze followers and following with proper access checks"""
         if not self.current_profile:
             print("❌ No profile loaded!")
             return
         
-        print(f"\n👥 ANALYZING FOLLOWERS (first {max_followers})...")
+        print("\n👥 ANALYZING FOLLOWERS...")
         
-        try:
-            # Get followers and followees with safety limits
-            followers = []
-            followees = []
-            
-            for i, follower in enumerate(self.current_profile.get_followers()):
-                if i >= max_followers:
-                    break
-                followers.append(follower.username)
-                time.sleep(random.uniform(0.5, 1.5))
-            
-            for i, followee in enumerate(self.current_profile.get_followees()):
-                if i >= max_followers:
-                    break
-                followees.append(followee.username)
-                time.sleep(random.uniform(0.5, 1.5))
-            
-            # Analysis
+        # Check access first
+        if not self.can_access_followers(self.current_profile):
+            print("❌ Cannot perform follower analysis - access restricted")
+            print("💡 Try logging in or check if the profile is private")
+            return [], []
+        
+        followers = self.get_followers_list(15)  # Reduced limit
+        followees = self.get_following_list(15)  # Reduced limit
+        
+        if followers and followees:
             not_following_back = set(followees) - set(followers)
             not_followed_back = set(followers) - set(followees)
             
-            print(f"✅ Followers analyzed: {len(followers)}")
-            print(f"✅ Following analyzed: {len(followees)}")
-            print(f"❌ You don't follow back: {len(not_followed_back)}")
-            print(f"❌ Don't follow you back: {len(not_following_back)}")
+            print(f"\n📊 ANALYSIS RESULTS:")
+            print(f"Followers analyzed: {len(followers)}")
+            print(f"Following analyzed: {len(followees)}")
+            print(f"Not following you back: {len(not_following_back)}")
+            print(f"You don't follow back: {len(not_followed_back)}")
+            
+            if not_following_back:
+                print(f"\n❌ Not following you back (first 5):")
+                for user in list(not_following_back)[:5]:
+                    print(f"  - {user}")
             
             # Save to file
             analysis_data = {
                 'timestamp': datetime.now().isoformat(),
                 'profile': self.current_profile.username,
-                'followers_count': len(followers),
-                'following_count': len(followees),
-                'not_following_back': list(not_following_back)[:20],  # First 20
-                'not_followed_back': list(not_followed_back)[:20]
+                'followers_sample': followers,
+                'following_sample': followees,
+                'not_following_back_count': len(not_following_back),
+                'not_followed_back_count': len(not_followed_back)
             }
             
             self._save_to_json(analysis_data, f"follower_analysis_{self.current_profile.username}")
             
-            return followers, followees, not_following_back, not_followed_back
-            
-        except Exception as e:
-            print(f"❌ Error in follower analysis: {e}")
-            return [], [], [], []
+            return followers, followees
+        else:
+            print("❌ Could not get follower data")
+            return [], []
     
     def mutual_friends_finder(self, target_username):
-        """Find mutual friends between current profile and target profile"""
+        """Find mutual friends with proper access checks"""
+        if not self.current_profile:
+            print("❌ No profile loaded!")
+            return
+        
         print(f"\n🤝 FINDING MUTUAL FRIENDS WITH @{target_username}...")
         
         try:
+            # Load target profile
             target_profile = instaloader.Profile.from_username(self.bot.context, target_username)
+            print(f"✅ Loaded target profile: @{target_username}")
             
-            # Get limited followers from both profiles
-            current_followers = set()
-            target_followers = set()
+            # Check access for both profiles
+            print("🔍 Checking access to your followers...")
+            if not self.can_access_followers(self.current_profile):
+                print("❌ Cannot access your followers")
+                return []
             
-            for i, follower in enumerate(self.current_profile.get_followers()):
-                if i >= 50:  # Limit for performance
-                    break
-                current_followers.add(follower.username)
-                time.sleep(0.5)
+            print("🔍 Checking access to target's followers...")
+            if not self.can_access_followers(target_profile):
+                print("❌ Cannot access target's followers")
+                return []
             
+            # Get followers from both profiles
+            print("📥 Getting your followers...")
+            your_followers = self.get_followers_list(10)  # Reduced limit
+            
+            print("📥 Getting target's followers...")
+            target_followers = []
             for i, follower in enumerate(target_profile.get_followers()):
-                if i >= 50:  # Limit for performance
+                if i >= 10:  # Reduced limit
                     break
-                target_followers.add(follower.username)
-                time.sleep(0.5)
+                target_followers.append(follower.username)
+                if (i + 1) % 3 == 0:
+                    print(f"  - Collected {i + 1} target followers...")
+                time.sleep(2)  # Increased delay
             
-            mutual_friends = current_followers.intersection(target_followers)
+            # Find mutual friends
+            mutual_friends = set(your_followers) & set(target_followers)
             
-            print(f"✅ Found {len(mutual_friends)} mutual friends:")
-            for friend in list(mutual_friends)[:10]:  # Show first 10
-                print(f"  👤 {friend}")
+            print(f"\n📊 MUTUAL FRIENDS RESULTS:")
+            print(f"Your followers checked: {len(your_followers)}")
+            print(f"Their followers checked: {len(target_followers)}")
+            print(f"Mutual friends found: {len(mutual_friends)}")
             
-            return mutual_friends
+            if mutual_friends:
+                print(f"\n👥 Mutual friends with @{target_username}:")
+                for i, friend in enumerate(list(mutual_friends)[:10]):
+                    print(f"  {i+1}. {friend}")
+            else:
+                print("😞 No mutual friends found in the samples checked")
+            
+            return list(mutual_friends)
             
         except Exception as e:
             print(f"❌ Error finding mutual friends: {e}")
-            return set()
-    
-    def post_performance_analyzer(self, post_limit=10):
-        """Analyze post performance"""
-        if not self.current_profile:
-            print("❌ No profile loaded!")
-            return
-        
-        print(f"\n📈 ANALYZING LAST {post_limit} POSTS...")
-        
-        posts_data = []
-        
-        try:
-            for i, post in enumerate(self.current_profile.get_posts()):
-                if i >= post_limit:
-                    break
-                
-                engagement_rate = (post.likes + post.comments) / self.current_profile.followers * 100 if self.current_profile.followers > 0 else 0
-                
-                posts_data.append({
-                    'post_number': i + 1,
-                    'date': post.date.strftime("%Y-%m-%d"),
-                    'likes': post.likes,
-                    'comments': post.comments,
-                    'engagement_rate': engagement_rate,
-                    'caption_preview': post.caption[:30] + '...' if post.caption else 'No caption',
-                    'is_video': post.is_video
-                })
-                
-                time.sleep(0.5)
-            
-            # Sort by engagement rate
-            posts_data.sort(key=lambda x: x['engagement_rate'], reverse=True)
-            
-            print("🏆 TOP PERFORMING POSTS:")
-            for i, post in enumerate(posts_data[:5]):
-                print(f"  {i+1}. Engagement: {post['engagement_rate']:.2f}% | "
-                      f"Likes: {post['likes']} | Date: {post['date']}")
-            
-            # Save analysis
-            self._save_to_json(posts_data, f"post_analysis_{self.current_profile.username}")
-            
-            return posts_data
-            
-        except Exception as e:
-            print(f"❌ Error analyzing posts: {e}")
             return []
     
-    def download_content(self, content_type="posts", limit=5):
-        """Download posts or stories"""
+    def simple_follower_check(self):
+        """Simple function to just login and check followers"""
         if not self.current_profile:
             print("❌ No profile loaded!")
             return
         
-        target_folder = f"{self.data_folder}/{self.current_profile.username}_{content_type}"
+        print(f"\n🔍 SIMPLE FOLLOWER CHECK FOR @{self.current_profile.username}")
+        print("="*50)
         
-        try:
-            if content_type == "posts":
-                print(f"\n📥 DOWNLOADING LAST {limit} POSTS...")
-                posts = self.current_profile.get_posts()
-                
-                for i, post in enumerate(posts):
-                    if i >= limit:
-                        break
-                    self.bot.download_post(post, target=target_folder)
-                    print(f"  ✅ Downloaded post {i+1}")
-                    time.sleep(1)
-                    
-            elif content_type == "stories":
-                print(f"\n📖 DOWNLOADING STORIES...")
-                # Note: Stories download requires login
-                for story in self.bot.get_stories([self.current_profile.userid]):
-                    for item in story.get_items():
-                        self.bot.download_storyitem(item, target=target_folder)
-                        print(f"  ✅ Downloaded story from {item.date}")
-            
-            print(f"✅ Content saved to: {target_folder}")
-            
-        except Exception as e:
-            print(f"❌ Error downloading content: {e}")
-    
-    def generate_report(self):
-        """Generate a comprehensive report"""
-        if not self.current_profile:
-            print("❌ No profile loaded!")
+        # Check access first
+        if not self.can_access_followers(self.current_profile):
+            print("❌ Cannot access followers for this profile")
+            print("💡 Possible reasons:")
+            print("   - Profile is private")
+            print("   - You need to be logged in")
+            print("   - You don't follow this private account")
+            print("   - Instagram is blocking access")
             return
         
-        print(f"\n📋 GENERATING COMPREHENSIVE REPORT FOR @{self.current_profile.username}...")
+        # Get a small sample of followers
+        print("📥 Getting follower sample...")
+        followers = self.get_followers_list(10)  # Just 10 followers
         
-        # Basic info
-        self.basic_profile_info()
-        
-        # Follower analysis
-        followers, followees, not_following_back, not_followed_back = self.follower_analysis(50)
-        
-        # Post analysis
-        posts_data = self.post_performance_analyzer(10)
-        
-        # Save comprehensive report
-        report = {
-            'generated_at': datetime.now().isoformat(),
-            'profile': self.current_profile.username,
-            'basic_info': {
-                'user_id': self.current_profile.userid,
-                'posts': self.current_profile.mediacount,
-                'followers': self.current_profile.followers,
-                'following': self.current_profile.followees,
-                'is_private': self.current_profile.is_private,
-                'is_verified': self.current_profile.is_verified
-            },
-            'follower_analysis': {
-                'followers_analyzed': len(followers),
-                'following_analyzed': len(followees),
-                'not_following_back_count': len(not_following_back),
-                'not_followed_back_count': len(not_followed_back)
-            },
-            'post_analysis': {
-                'posts_analyzed': len(posts_data),
-                'average_engagement': sum(p['engagement_rate'] for p in posts_data) / len(posts_data) if posts_data else 0,
-                'top_posts': posts_data[:3] if posts_data else []
-            }
-        }
-        
-        self._save_to_json(report, f"comprehensive_report_{self.current_profile.username}")
-        print(f"✅ Comprehensive report generated and saved!")
+        if followers:
+            print(f"\n👥 First {len(followers)} followers of @{self.current_profile.username}:")
+            for i, follower in enumerate(followers, 1):
+                print(f"  {i}. {follower}")
+        else:
+            print("❌ Could not retrieve any followers")
     
     def _save_to_json(self, data, filename):
         """Save data to JSON file"""
         filepath = f"{self.data_folder}/{filename}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         with open(filepath, 'w', encoding='utf-8') as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
+        print(f"💾 Data saved to: {filepath}")
         return filepath
 
 def main():
     """Main function to run the InstaInsight dashboard"""
     analyzer = InstaInsight()
     
-    print("🚀 WELCOME TO INSTAINSIGHT - INSTAGRAM ANALYTICS DASHBOARD")
-    print("="*60)
+    print("🚀 INSTAINSIGHT - FOLLOWER ACCESS CHECKER")
+    print("="*50)
+    print("Focus: Login and check follower access")
+    print("="*50)
     
     while True:
         print("\n📋 MAIN MENU:")
         print("1. Load Profile")
-        print("2. Login to Instagram")
-        print("3. Basic Profile Info")
-        print("4. Follower Analysis")
-        print("5. Find Mutual Friends")
-        print("6. Post Performance Analysis")
-        print("7. Download Content")
-        print("8. Generate Comprehensive Report")
-        print("9. Exit")
+        print("2. Login to Instagram") 
+        print("3. Show Profile Info + Access Check")
+        print("4. Simple Follower Check")
+        print("5. Follower Analysis")
+        print("6. Find Mutual Friends")
+        print("7. Exit")
         
-        choice = input("\nEnter your choice (1-9): ").strip()
+        choice = input("\nChoose an option (1-7): ").strip()
         
         if choice == '1':
             username = input("Enter Instagram username: ").strip()
@@ -316,34 +360,27 @@ def main():
             analyzer.basic_profile_info()
             
         elif choice == '4':
-            analyzer.follower_analysis()
+            analyzer.simple_follower_check()
             
         elif choice == '5':
-            target_user = input("Enter target username to find mutual friends: ").strip()
-            analyzer.mutual_friends_finder(target_user)
+            analyzer.follower_analysis()
             
         elif choice == '6':
-            analyzer.post_performance_analyzer()
+            if not analyzer.current_profile:
+                print("❌ Please load a profile first!")
+            else:
+                target = input("Enter target username: ").strip()
+                if target:
+                    analyzer.mutual_friends_finder(target)
+                else:
+                    print("❌ Please enter a username")
             
         elif choice == '7':
-            print("Download options:")
-            print("1. Posts")
-            print("2. Stories (requires login)")
-            dl_choice = input("Choose content type (1-2): ").strip()
-            if dl_choice == '1':
-                analyzer.download_content("posts", 5)
-            elif dl_choice == '2':
-                analyzer.download_content("stories", 5)
-            
-        elif choice == '8':
-            analyzer.generate_report()
-            
-        elif choice == '9':
             print("👋 Thank you for using InstaInsight!")
             break
             
         else:
-            print("❌ Invalid choice. Please try again.")
+            print("❌ Invalid choice")
         
         input("\nPress Enter to continue...")
 
